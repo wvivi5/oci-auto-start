@@ -1,6 +1,6 @@
 """
 cron: */3 * * * *
-new Env('甲骨文新加坡 AMD 抢开机(终极通关版)');
+new Env('甲骨文新加坡 AMD 抢开机(全通道单行配置版)');
 """
 
 import os
@@ -12,6 +12,31 @@ import hashlib
 from datetime import datetime
 from urllib.parse import urlparse
 
+# ==================== 核心配置区域 ====================
+USER_OCID = "ocid1.user.oc1..aaaa..."
+TENANCY_OCID = "ocid1.tenancy.oc1..aaaaaaaaunpldtsmaphowagoyjzq5lkulnineh56zhlqbjiyijxqdi5hze3a"
+FINGERPRINT = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+INSTANCE_ID = "ocid1.instance.oc1.ap-singapore-1.anzwsljrprlfhnacf5fkzq4gd3du72kjsg7uietdwwhpbf3mnaj5d3kyumja"
+REGION = "ap-singapore-1"
+KEY_FILE_PATH = "/ql/data/config/oci_api_key.pem"
+
+# ----------------- 通知通道单行配置区 (优先读取环境变量，为空取默认值) -----------------
+# 1. 企业微信应用 (格式: 企业ID,Secret,成员ID,应用ID)
+QYWX_AM = os.getenv("QYWX_AM", "wwxxxxxxxxxxxxxx,SECRET_XXXXXXXXXX,@all,1000002")
+
+# 2. 企业微信机器人 Webhook KEY
+QYWX_KEY = os.getenv("QYWX_KEY", "")
+
+# 3. Server酱 SendKey
+PUSH_KEY = os.getenv("PUSH_KEY", "")
+
+# 4. Pushplus Token
+PUSH_PLUS_TOKEN = os.getenv("PUSH_PLUS_TOKEN", "")
+
+# 5. Telegram 机器人 (格式: Token,Chat_ID)
+TG_BOT = os.getenv("TG_BOT", "")
+# ====================================================
+
 try:
     from Crypto.PublicKey import RSA
     from Crypto.Signature import pkcs1_15
@@ -19,23 +44,102 @@ try:
 except ImportError:
     print("❌ 缺失依赖库 pycryptodome，请在青龙【依赖管理 -> Python3】添加依赖: pycryptodome")
 
-try:
-    from notify import send
-except ImportError:
-    def send(title, content):
-        print(f"【通知推送】{title}\n{content}")
+# ----------------- 5 大全通道原生推送逻辑 -----------------
+def send_all_notifications(title, content):
+    """同时向已配置的所有通道发送通知"""
+    pushed = False
 
-# ==================== 核心配置区域 ====================
-USER_OCID = "ocid1.user.oc1..aaaa..."
-TENANCY_OCID = "ocid1.tenancy.oc1..aaaaaaaa..."
-FINGERPRINT = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
-INSTANCE_ID = "ocid1.instance.oc1.ap-singapore-1.aaaa..."
-REGION = "ap-singapore-1"
-KEY_FILE_PATH = "/ql/data/config/oci_api_key.pem"
-# ====================================================
+    # 1. 企业微信应用 (解析单行 QYWX_AM 配置，发送纯文本，无 media_id 报错)
+    if QYWX_AM and "," in QYWX_AM:
+        try:
+            parts = [p.strip() for p in QYWX_AM.split(",")]
+            if len(parts) >= 4:
+                corpid, secret, touser, agentid = parts[0], parts[1], parts[2], parts[3]
+                token_url = f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={corpid}&corpsecret={secret}"
+                token_res = requests.get(token_url, timeout=10).json()
+                access_token = token_res.get("access_token")
+                if access_token:
+                    msg_url = f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={access_token}"
+                    payload = {
+                        "touser": touser,
+                        "msgtype": "text",
+                        "agentid": agentid,
+                        "text": {"content": f"{title}\n\n{content}"},
+                        "safe": 0
+                    }
+                    res = requests.post(msg_url, json=payload, timeout=10).json()
+                    if res.get("errcode") == 0:
+                        print("🎉 【企业微信应用】推送成功！")
+                        pushed = True
+                    else:
+                        print(f"❌ 【企业微信应用】推送失败: {res}")
+        except Exception as e:
+            print(f"❌ 【企业微信应用】推送异常: {e}")
+
+    # 2. 企业微信机器人 (Webhook)
+    if QYWX_KEY:
+        try:
+            bot_url = f"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={QYWX_KEY}"
+            payload = {
+                "msgtype": "text",
+                "text": {"content": f"{title}\n\n{content}"}
+            }
+            res = requests.post(bot_url, json=payload, timeout=10).json()
+            if res.get("errcode") == 0:
+                print("🎉 【企业微信机器人】推送成功！")
+                pushed = True
+            else:
+                print(f"❌ 【企业微信机器人】推送失败: {res}")
+        except Exception as e:
+            print(f"❌ 【企业微信机器人】推送异常: {e}")
+
+    # 3. Server 酱
+    if PUSH_KEY:
+        try:
+            sct_url = f"https://sctapi.ftqq.com/{PUSH_KEY}.send"
+            payload = {"title": title, "desp": content}
+            res = requests.post(sct_url, data=payload, timeout=10).json()
+            if res.get("code") == 0 or res.get("errno") == 0:
+                print("🎉 【Server酱】推送成功！")
+                pushed = True
+            else:
+                print(f"❌ 【Server酱】推送失败: {res}")
+        except Exception as e:
+            print(f"❌ 【Server酱】推送异常: {e}")
+
+    # 4. Pushplus (推送加)
+    if PUSH_PLUS_TOKEN:
+        try:
+            pp_url = "http://www.pushplus.plus/send"
+            payload = {"token": PUSH_PLUS_TOKEN, "title": title, "content": content}
+            res = requests.post(pp_url, json=payload, timeout=10).json()
+            if res.get("code") == 200:
+                print("🎉 【Pushplus】推送成功！")
+                pushed = True
+            else:
+                print(f"❌ 【Pushplus】推送失败: {res}")
+        except Exception as e:
+            print(f"❌ 【Pushplus】推送异常: {e}")
+
+    # 5. Telegram 机器人 (格式: Token,Chat_ID)
+    if TG_BOT and "," in TG_BOT:
+        try:
+            tg_token, tg_chat_id = TG_BOT.split(",")[0].strip(), TG_BOT.split(",")[1].strip()
+            tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+            payload = {"chat_id": tg_chat_id, "text": f"{title}\n\n{content}"}
+            res = requests.post(tg_url, json=payload, timeout=10).json()
+            if res.get("ok"):
+                print("🎉 【Telegram】推送成功！")
+                pushed = True
+            else:
+                print(f"❌ 【Telegram】推送失败: {res}")
+        except Exception as e:
+            print(f"❌ 【Telegram】推送异常: {e}")
+
+    if not pushed:
+        print("⚠️ 未匹配到任何有效的推送参数，仅在控制台打印日志。")
 
 def sign_string(message, key_path):
-    """使用 PyCryptodome 进行标准的 RSA-SHA256 签名"""
     try:
         with open(key_path, "r", encoding="utf-8") as f:
             key_data = f.read()
@@ -72,8 +176,6 @@ def sign_request(method, url, key_path, body=""):
     if method_upper in ["POST", "PUT"]:
         body_bytes = body.encode('utf-8') if isinstance(body, str) else body
         content_length = str(len(body_bytes))
-        
-        # 计算 Payload 的 Base64 SHA256 摘要
         sha256_hash = hashlib.sha256(body_bytes).digest()
         content_sha256 = base64.b64encode(sha256_hash).decode('utf-8')
         
@@ -121,12 +223,13 @@ def main():
     if status == "RUNNING":
         msg = "🎉 恭喜！你的 Oracle Cloud 新加坡 AMD 实例已经成功抢到资源并开机！"
         print(msg)
-        send("甲骨文开机成功提醒", msg)
+        # 单行配置解析，直连企微应用纯文本 API
+        send_all_notifications("甲骨文开机成功提醒", msg)
         print("💡 请手动在青龙面板中禁用此任务。")
     elif status == "STOPPED":
         print("🚀 正在发送启动 (START) 指令...")
         action_url = f"{base_url}?action=START"
-        body_data = "" # 甲骨文 START 操作要求 Body 必须为空字符串
+        body_data = ""
         action_headers = sign_request("POST", action_url, KEY_FILE_PATH, body=body_data)
         if not action_headers:
             return
