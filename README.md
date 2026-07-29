@@ -78,3 +78,45 @@ python3 oci_start.py
 
 - 请勿将包含私钥或真实 OCID 信息的代码直接提交至公开仓库。
 - 请根据实际需求合理设置 Cron 轮询频率，避免触发 OCI API 的 429 频次限制。
+
+---
+
+## 📥 青龙面板拉取本仓库（订阅管理）
+
+在青龙面板 **【订阅管理 -> 新建订阅】** 中配置，或直接在 **【定时任务】** 中运行以下拉库命令。
+
+### 方式一：ql repo 命令拉取（推荐）
+
+青龙内置 `ql repo` 命令，会自动识别脚本头部的 `cron` 和 `new Env` 声明并生成定时任务：
+
+```bash
+ql repo https://github.com/wvivi5/oci-auto-start.git "oci_start" "" "" "main"
+```
+
+参数说明：
+- 第 1 个参数：仓库地址
+- 第 2 个参数：`whitelist` 白名单（只拉取文件名包含 `oci_start` 的脚本）
+- 第 3 个参数：`blacklist` 黑名单（留空）
+- 第 4 个参数：`dependence` 依赖文件关键字（留空）
+- 第 5 个参数：分支名（本仓库为 `main`，如是旧版请改为 `master`）
+
+> 注：若拉取后发现分支报错，可先用 `git ls-remote https://github.com/wvivi5/oci-auto-start.git` 确认默认分支名。
+
+### 方式二：青龙面板界面「订阅管理」
+
+1. 进入青龙面板 -> **订阅管理** -> **创建订阅**。
+2. 名称：`OCI抢开机`
+3. 类型：选择 **公开仓库**
+4. 链接：`https://github.com/wvivi5/oci-auto-start.git`
+5. 分支：`main`
+6. 白名单：`oci_start`
+7. 定时规则（订阅自身的更新频率）：例如 `0 0 * * *`（每天同步一次仓库）
+8. 保存后点击 **运行**，青龙会自动拉取脚本并根据脚本头部声明生成 `*/3 * * * *` 的抢开机定时任务。
+
+### 方式三：raw 单文件拉取（拉取单个脚本）
+
+如果只想拉取单个脚本文件，可在青龙定时任务中执行：
+
+```bash
+ql raw https://raw.githubusercontent.com/wvivi5/oci-auto-start/main/oci_start.py
+```
